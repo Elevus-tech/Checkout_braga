@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Checkout Braga
- * Version: 1.0.1
+ * Version: 1.0.2
  * Description: Plugin customizado para processamento de checkout.
  * Author: Elevus Tech
  */
