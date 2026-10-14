@@ -1,45 +1,32 @@
 <?php
 /**
- * Plugin Name: Custom checkout Braga
- * Description: Checkout transparente e 100% customizável focado em alta conversão via Shortcode.
- * Version: 1.0.0
- * Author: Websbraga
- * Text Domain: custom-checkout
+ * Plugin Name: Checkout Braga
+ * Version: 1.0.1
+ * Description: Plugin customizado para processamento de checkout.
+ * Author: Elevus Tech
  */
 
-if ( ! defined( 'ABSPATH' ) ) exit;
-
-$puc_filepath = plugin_dir_path( __FILE__ ) . 'plugin-update-checker/plugin-update-checker.php';
-
-if ( file_exists( $puc_filepath ) ) {
-    require_once $puc_filepath;
-
-    if ( class_exists( 'YahnisElsts\PluginUpdateChecker\v5\PucFactory' ) ) {
-        
-        /**
-         * Inicialização do mecanismo de atualização autônoma apontando para o repositório remoto.
-         * Substitua o URI abaixo pelo endereço HTTPS oficial do seu repositório GitHub.
-         */
-        $braga_update_checker = YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
-            'https://github.com/Elevus-tech/Checkout_braga.git',
-            __FILE__,
-            'custom-checkout'
-        );
-
-        // Definição da branch principal de onde as atualizações estáveis serão originadas.
-        $braga_update_checker->setBranch( 'main' );
-
-        /**
-         * Configuração de Autenticação para Repositórios Privados.
-         * Insira o Personal Access Token (PAT) gerado no painel de desenvolvedor do GitHub.
-         */
-        $github_token = 'ghp_COLE_SEU_TOKEN_AQUI';
-        $braga_update_checker->setAuthentication( $github_token );
-    }
-} else {
-    // Registro de falha arquitetural para fins de auditoria
-    error_log( '[Custom Checkout Braga] Falha crítica: Biblioteca Plugin Update Checker não localizada no diretório esperado.' );
+// Bloqueia o acesso direto ao arquivo por questões de segurança
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
 }
+
+// Requer o arquivo principal do Plugin Update Checker
+require_once plugin_dir_path( __FILE__ ) . 'plugin-update-checker/plugin-update-checker.php';
+use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
+
+/**
+ * Inicializa o verificador de atualizações.
+ * Como o repositório é público, não é necessária a injeção de tokens de autenticação.
+ */
+$myUpdateChecker = PucFactory::buildUpdateChecker(
+    'https://github.com/Elevus-tech/Checkout_braga', // URL do repositório público
+    __FILE__, // Arquivo principal do plugin
+    'checkout-braga' // Slug do plugin (deve ser idêntico ao nome da pasta do plugin)
+);
+
+// Define explicitamente qual branch o PUC deve monitorar para atualizações
+$myUpdateChecker->setBranch( 'main' );
 
 // Carrega os arquivos internos
 require_once plugin_dir_path( __FILE__ ) . 'includes/class-braga-config.php';
