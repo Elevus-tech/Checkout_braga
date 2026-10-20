@@ -17,15 +17,12 @@ use YahnisElsts\PluginUpdateChecker\v5\PucFactory;
 
 /**
  * Inicializa o verificador de atualizações.
- * Como o repositório é público, não é necessária a injeção de tokens de autenticação.
  */
 $myUpdateChecker = PucFactory::buildUpdateChecker(
-    'https://github.com/Elevus-tech/Checkout_braga', // URL do repositório público
-    __FILE__, // Arquivo principal do plugin
-    'checkout-braga' // Slug do plugin (deve ser idêntico ao nome da pasta do plugin)
+    'https://github.com/Elevus-tech/Checkout_braga',
+    __FILE__,
+    'checkout-braga'
 );
-
-// Define explicitamente qual branch o PUC deve monitorar para atualizações
 $myUpdateChecker->setBranch( 'main' );
 
 // Carrega os arquivos internos
@@ -42,7 +39,7 @@ class Custom_Checkout_Core {
     public function enqueue_checkout_assets() {
         global $post;
         if ( is_a( $post, 'WP_Post' ) && has_shortcode( $post->post_content, 'websbraga_checkout' ) ) {
-            // Assets virão aqui futuramente
+            // Assets futuros
         }
     }
 
@@ -93,7 +90,7 @@ function add_checkout1_gateway( $gateways ) {
     return $gateways;
 }
 
-// TRAVA DE AGÊNCIA: Esconde o gateway do cliente fofoqueiro
+// TRAVA DE AGÊNCIA: Esconde o gateway do cliente
 add_action( 'admin_head', 'esconder_gateway_do_cliente' );
 function esconder_gateway_do_cliente() {
     if ( ! isset( $_GET['page'] ) || $_GET['page'] !== 'wc-settings' || ! isset( $_GET['tab'] ) || $_GET['tab'] !== 'checkout' ) return;
@@ -110,11 +107,6 @@ function esconder_gateway_do_cliente() {
  * ==============================================================================
  * INTEGRAÇÃO LOGÍSTICA: MELHOR ENVIO (CARRINHO) COM RESGATE DINÂMICO
  * ==============================================================================
- * Exporta os dados do pedido para o carrinho do Melhor Envio de forma dinâmica,
- * reaproveitando o Token do plugin oficial e o ID do serviço escolhido no checkout.
- *
- * @param int $order_id Identificador numérico do pedido no WooCommerce.
- * @return void
  */
 function braga_exportar_pedido_melhor_envio_dinamico( $order_id ) {
     $order = wc_get_order( $order_id );
@@ -128,13 +120,10 @@ function braga_exportar_pedido_melhor_envio_dinamico( $order_id ) {
         return;
     }
 
-    // ==========================================================================
-    // 1. EXTRAÇÃO DINÂMICA DO TOKEN (PLUGIN OFICIAL DO MELHOR ENVIO)
-    // ==========================================================================
+    // 1. EXTRAÇÃO DINÂMICA DO TOKEN
     $me_settings = get_option( 'woocommerce_melhor-envio_settings', [] );
     $me_access_token = isset( $me_settings['token'] ) ? $me_settings['token'] : '';
 
-    // Fallback genérico caso o plugin antigo use a nomenclatura legada
     if ( empty( $me_access_token ) ) {
         $me_settings = get_option( 'wcmp_settings', [] );
         $me_access_token = isset( $me_settings['token'] ) ? $me_settings['token'] : '';
@@ -145,19 +134,15 @@ function braga_exportar_pedido_melhor_envio_dinamico( $order_id ) {
         return;
     }
 
-    // ==========================================================================
-    // 2. EXTRAÇÃO DINÂMICA DO SERVIÇO DE FRETE (PAC, SEDEX, JADLOG, ETC)
-    // ==========================================================================
-    $service_id = 1; // Fallback estrutural para PAC
+    // 2. EXTRAÇÃO DINÂMICA DO SERVIÇO DE FRETE
+    $service_id = 1; 
     $shipping_methods = $order->get_shipping_methods();
 
     foreach ( $shipping_methods as $method ) {
         $method_id = $method->get_method_id();
         $instance_id = $method->get_instance_id();
 
-        // O provedor costuma atrelar o ID da transportadora no instance_id ou method_id
         if ( strpos( $method_id, 'melhor_envio' ) !== false || strpos( $method_id, 'wcmp' ) !== false ) {
-            // Tenta extrair o identificador numérico da string (ex: "melhor_envio:2")
             $parts = explode( ':', $method_id );
             if ( isset( $parts[1] ) && is_numeric( $parts[1] ) ) {
                 $service_id = (int) $parts[1];
@@ -168,51 +153,76 @@ function braga_exportar_pedido_melhor_envio_dinamico( $order_id ) {
         }
     }
 
-    // ==========================================================================
-    // 3. MONTAGEM DO PAYLOAD E SUBMISSÃO À API
-    // ==========================================================================
+    // 3. MONTAGEM DOS PRODUTOS E VOLUMES
+    $total_weight     = 0;
+    $max_height       = 0;
+    $max_width        = 0;
+    $max_length       = 0;
     $products_payload = [];
+
     foreach ( $order->get_items() as $item ) {
-        $products_payload[] = [
-            'name'          => sanitize_text_field( $item->get_name() ),
-            'quantity'      => (int) $item->get_quantity(),
-            'unitary_value' => (float) $order->get_item_subtotal( $item, false )
-        ];
+        $product = $item->get_product();
+        
+        if ( $product && ! $product->is_virtual() ) {
+            $qty = (int) $item->get_quantity();
+            
+            // Popula o array de produtos para a API
+            $products_payload[] = [
+                'name'          => $product->get_name(),
+                'quantity'      => $qty,
+                'unitary_value' => (float) $order->get_item_subtotal( $item, false )
+            ];
+
+            // Acúmulo de peso e dimensões
+            $weight = (float) $product->get_weight();
+            $total_weight += ( $weight > 0 ? $weight : 0.3 ) * $qty;
+
+            $height = (float) $product->get_height();
+            $width  = (float) $product->get_width();
+            $length = (float) $product->get_length();
+
+            $max_height = max( $max_height, $height > 0 ? $height : 4 );
+            $max_width  = max( $max_width, $width > 0 ? $width : 11 );
+            $max_length = max( $max_length, $length > 0 ? $length : 16 );
+        }
     }
 
+    $total_weight = max( $total_weight, 0.3 );
+    $max_height   = max( $max_height, 4 );
+    $max_width    = max( $max_width, 11 );
+    $max_length   = max( $max_length, 16 );
+
+    // 4. ESTRUTURAÇÃO DO PAYLOAD FINAL
+    // ATENÇÃO: Os dados do remetente ('from') devem ser os da sua loja.
     $payload = [
-        'service' => $service_id,
-        // A chave 'agency' é requerida para transportadoras privadas (ex: JadLog).
-        // A implementação completa exigiria mapeamento da transportadora escolhida.
-        'from'    => [
-            'name'          => get_bloginfo( 'name' ),
-            'document'      => '00000000000000', // Recomenda-se resgatar das configurações da loja
-            'address'       => 'Endereço Padrão',
-            'number'        => 'S/N',
-            'district'      => 'Centro',
-            'city'          => 'São Paulo',
-            'state_abbr'    => 'SP',
-            'postal_code'   => get_option( 'woocommerce_store_postcode', '01001000' )
+        'service'  => $service_id,
+        'from'     => [
+            'name'          => get_option('blogname'),
+            'phone'         => '11999999999', // Substitua pelo telefone da Elevus Tech/Loja
+            'email'         => get_option('admin_email'),
+            'document'      => '', // CNPJ da loja se necessário
+            'postal_code'   => get_option('woocommerce_store_postcode', '01001000'), // Puxa do Woo
+            'address'       => get_option('woocommerce_store_address', 'Rua Padrão'),
+            'number'        => 'S/N'
         ],
-        'to'      => [
+        'to'       => [
             'name'          => $order->get_shipping_first_name() . ' ' . $order->get_shipping_last_name(),
-            'phone'         => preg_replace( '/[^0-9]/', '', $order->get_billing_phone() ),
+            'phone'         => $order->get_billing_phone(),
             'email'         => $order->get_billing_email(),
-            'document'      => $order->get_meta( '_billing_cpf' ),
+            'document'      => $order->get_meta('_billing_cpf'), // Ajuste a meta key conforme seu checkout
             'address'       => $order->get_shipping_address_1(),
-            'number'        => $order->get_meta( '_shipping_number' ) ?: 'S/N',
-            'district'      => $order->get_meta( '_shipping_neighborhood' ) ?: 'Bairro',
+            'number'        => $order->get_shipping_address_2() ?: 'S/N',
+            'postal_code'   => preg_replace('/[^0-9]/', '', $order->get_shipping_postcode()),
             'city'          => $order->get_shipping_city(),
             'state_abbr'    => $order->get_shipping_state(),
-            'postal_code'   => preg_replace( '/[^0-9]/', '', $order->get_shipping_postcode() )
         ],
         'products' => $products_payload,
         'volumes'  => [
             [
-                'height' => 10,
-                'width'  => 20,
-                'length' => 30,
-                'weight' => 1.5
+                'height' => $max_height,
+                'width'  => $max_width,
+                'length' => $max_length,
+                'weight' => $total_weight
             ]
         ],
         'options' => [
@@ -224,6 +234,7 @@ function braga_exportar_pedido_melhor_envio_dinamico( $order_id ) {
         ]
     ];
 
+    // 5. SUBMISSÃO À API DO MELHOR ENVIO
     $response = wp_remote_post( 'https://www.melhorenvio.com.br/api/v2/me/cart', [
         'headers' => [
             'Accept'        => 'application/json',
