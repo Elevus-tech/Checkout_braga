@@ -5,10 +5,11 @@ class Custom_Checkout_Braga_Config {
 
     const OPTION_PANEL_URL      = 'braga_checkout_panel_url';
     const OPTION_CONTRACT_TOKEN = 'braga_checkout_contract_token';
-    const OPTION_CACHED_CONFIG = 'braga_checkout_cached_config';
-    const OPTION_LAST_SYNC     = 'braga_checkout_last_sync';
-    const OPTION_LAST_ERROR    = 'braga_checkout_last_error';
-	/**
+    const OPTION_CACHED_CONFIG  = 'braga_checkout_cached_config';
+    const OPTION_LAST_SYNC      = 'braga_checkout_last_sync';
+    const OPTION_LAST_ERROR     = 'braga_checkout_last_error';
+
+    /**
      * Inicializa as rotinas de agendamento (Cron) do plugin.
      * Deve ser invocado no construtor da classe.
      */
@@ -76,6 +77,25 @@ class Custom_Checkout_Braga_Config {
         $contract_token = isset( $_POST['contract_token'] )
             ? sanitize_text_field( wp_unslash( $_POST['contract_token'] ) )
             : '';
+        $thankyou_page_id = isset( $_POST['thankyou_page_id'] )
+            ? absint( $_POST['thankyou_page_id'] )
+            : 0;
+
+        if (
+            $thankyou_page_id
+            && (
+                get_post_type( $thankyou_page_id ) !== 'page'
+                || get_post_status( $thankyou_page_id ) !== 'publish'
+            )
+        ) {
+            $thankyou_page_id = 0;
+        }
+
+        update_option(
+            'braga_checkout_thankyou_page_id',
+            $thankyou_page_id,
+            false
+        );
 
         $panel_url = trim( $panel_url );
         $contract_token = trim( $contract_token );
@@ -85,6 +105,17 @@ class Custom_Checkout_Braga_Config {
         }
 
         $panel_url = untrailingslashit( esc_url_raw( $panel_url ) );
+        $old_panel_url = self::get_panel_url();
+        $old_token = self::get_contract_token();
+
+        if (
+            $old_panel_url !== $panel_url
+            || $old_token !== $contract_token
+        ) {
+            delete_option( self::OPTION_CACHED_CONFIG );
+            delete_option( self::OPTION_LAST_SYNC );
+            delete_option( self::OPTION_LAST_ERROR );
+        }
 
         update_option( self::OPTION_PANEL_URL, $panel_url, false );
         update_option( self::OPTION_CONTRACT_TOKEN, $contract_token, false );
@@ -137,61 +168,61 @@ class Custom_Checkout_Braga_Config {
         exit;
     }
 
-    public static function sync_config( $panel_url = '', $contract_token = '' ) {
-        $panel_url = $panel_url ? $panel_url : get_option( self::OPTION_PANEL_URL, '' );
-        $contract_token = $contract_token ? $contract_token : get_option( self::OPTION_CONTRACT_TOKEN, '' );
+    public static function sync_config() {
+        $panel_url = get_option( 'braga_checkout_panel_url', '' );
+        $token     = get_option( 'braga_checkout_contract_token', '' );
 
-        $panel_url = trim( $panel_url );
-        $contract_token = trim( $contract_token );
-
-        if ( empty( $panel_url ) ) {
-            return new WP_Error( 'braga_missing_panel_url', 'Informe a URL do painel Braga.' );
+        if ( empty( $panel_url ) || empty( $token ) ) {
+            return new WP_Error( 'missing_credentials', __( 'As credenciais do painel não estão configuradas.', 'braga-checkout' ) );
         }
 
-        if ( empty( $contract_token ) ) {
-            return new WP_Error( 'braga_missing_token', 'Informe o token do contrato.' );
+        // Validação de segurança: Exige HTTPS para comunicação externa.
+        if ( strpos( $panel_url, 'https://' ) !== 0 ) {
+            error_log( 'Falha de segurança: Tentativa de comunicação externa utilizando protocolo não seguro (HTTP).' );
+            return new WP_Error( 'insecure_protocol', __( 'A URL do painel deve utilizar HTTPS.', 'braga-checkout' ) );
         }
 
-        $panel_url = untrailingslashit( esc_url_raw( $panel_url ) );
+        $endpoint = trailingslashit( $panel_url ) . 'api/checkout/config';
 
-        $endpoint = $panel_url . '/api/checkout/config/' . rawurlencode( $contract_token );
+        $args = array(
+            'timeout'     => 15,
+            'redirection' => 5,
+            'httpversion' => '1.1',
+            'blocking'    => true,
+            'method'      => 'POST',
+            'headers'     => array(
+                'Content-Type'           => 'application/json',
+                'Accept'                 => 'application/json',
+                'X-Braga-Checkout-Token' => sanitize_text_field( $token ),
+            ),
+            'body'        => wp_json_encode( array(
+                'domain' => site_url(),
+                'action' => 'sync_configuration'
+            ) ),
+        );
 
-        $response = wp_remote_get( $endpoint, [
-            'timeout' => 20,
-            'headers' => [
-                'Accept' => 'application/json',
-            ],
-        ] );
+        $response = wp_remote_post( $endpoint, $args );
 
         if ( is_wp_error( $response ) ) {
-            return new WP_Error(
-                'braga_request_error',
-                'Erro ao conectar no painel Braga: ' . $response->get_error_message()
-            );
+            error_log( 'Erro de comunicação com o painel SaaS: ' . $response->get_error_message() );
+            return $response;
         }
 
-        $status_code = wp_remote_retrieve_response_code( $response );
-        $body = wp_remote_retrieve_body( $response );
+        $http_code = wp_remote_retrieve_response_code( $response );
+        $body      = wp_remote_retrieve_body( $response );
+        $data      = json_decode( $body, true );
 
-        if ( $status_code < 200 || $status_code >= 300 ) {
-            return new WP_Error(
-                'braga_invalid_status',
-                'Painel Braga retornou status HTTP ' . $status_code . '. Resposta: ' . wp_strip_all_tags( $body )
-            );
+        if ( $http_code !== 200 || empty( $data ) ) {
+            error_log( sprintf( 'Sincronização falhou. Código HTTP: %d. Resposta: %s', $http_code, $body ) );
+            return new WP_Error( 'sync_failed', __( 'A sincronização com o painel falhou devido a um retorno inválido.', 'braga-checkout' ) );
         }
 
-        $data = json_decode( $body, true );
-
-        if ( ! is_array( $data ) ) {
-            return new WP_Error(
-                'braga_invalid_json',
-                'Resposta inválida do painel Braga.'
-            );
-        }
-
+        // Atualização de configurações baseadas na resposta validada.
         if ( empty( $data['success'] ) ) {
-            $error_message = isset( $data['error'] ) ? $data['error'] : 'Painel Braga recusou a configuração.';
-            return new WP_Error( 'braga_api_error', $error_message );
+            return new WP_Error(
+                'braga_api_error',
+                $data['error'] ?? 'O painel recusou a sincronização.'
+            );
         }
 
         update_option( self::OPTION_CACHED_CONFIG, $data, false );
@@ -251,7 +282,7 @@ class Custom_Checkout_Braga_Config {
             : 0;
     }
 
-    public static function has_permission( $permission, $default = true ) {
+    public static function has_permission( $permission, $default = false ) {
         $config = self::get_config();
 
         if ( isset( $config['permissoes'][ $permission ] ) ) {
@@ -307,6 +338,7 @@ class Custom_Checkout_Braga_Config {
             <?php endif; ?>
 
             <div style="display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.7fr); gap: 20px; max-width: 1200px; margin-top: 20px;">
+                
 
                 <div style="background: #fff; border: 1px solid #dcdcde; border-radius: 8px; padding: 20px;">
                     <h2>Conexão com o painel Braga</h2>
@@ -316,6 +348,30 @@ class Custom_Checkout_Braga_Config {
                         <input type="hidden" name="action" value="braga_checkout_save_config">
 
                         <table class="form-table" role="presentation">
+                            <tr>
+                                <th scope="row">
+                                    <label for="thankyou_page_id">
+                                        Página de agradecimento
+                                    </label>
+                                </th>
+                                <td>
+                                    <?php
+                                    wp_dropdown_pages( [
+                                        'name'              => 'thankyou_page_id',
+                                        'id'                => 'thankyou_page_id',
+                                        'selected'          => absint(
+                                            get_option( 'braga_checkout_thankyou_page_id', 0 )
+                                        ),
+                                        'show_option_none'  => 'Usar página padrão do WooCommerce',
+                                        'option_none_value' => '0',
+                                    ] );
+                                    ?>
+
+                                    <p class="description">
+                                        Selecione a página para onde o cliente será enviado após a confirmação do pagamento.
+                                    </p>
+                                </td>
+                            </tr>
                             <tr>
                                 <th scope="row">
                                     <label for="panel_url">URL do Painel Braga</label>
@@ -456,7 +512,6 @@ class Custom_Checkout_Braga_Config {
                     // A flag 'mp_vinculado' é recebida a partir da sincronização 
                     // com a API central do Painel Braga.
                     $is_mp_connected = isset( $contrato['mp_vinculado'] ) && $contrato['mp_vinculado'];
-					
                     
                     if ( self::is_connected() && isset( $contrato['id'] ) ) : 
                         if ( $is_mp_connected ) :
@@ -472,8 +527,15 @@ class Custom_Checkout_Braga_Config {
                             </p>
                     <?php 
                         else : 
-                            // Montagem dinâmica da URL de autorização OAuth2 baseada no ID do contrato
-                            $oauth_url = rtrim( $panel_url, '/' ) . '/api/mp/auth/' . intval( $contrato['id'] );
+                            /**
+                             * Montagem dinâmica da URL de autorização OAuth2.
+                             * Envia a URL da loja como parâmetro para o backend (SaaS),
+                             * delegando o controle de estado para o banco de dados e eliminando 
+                             * a necessidade de sessões administrativas locais.
+                             */
+                            $base_auth_url = rtrim( $panel_url, '/' ) . '/api/mp/auth';
+                            $shop_url      = untrailingslashit( site_url() );
+                            $oauth_url     = add_query_arg( 'shop_url', urlencode( $shop_url ), $base_auth_url );
                     ?>
                             <p class="description" style="margin-bottom: 15px;">
                                 Para processar pagamentos, é obrigatório vincular sua conta do Mercado Pago.

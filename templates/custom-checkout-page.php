@@ -672,44 +672,171 @@ $cart_total_float = number_format( (float) $cart->get_total( 'edit' ), 2, '.', '
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             })
-            .then(res => res.json())
+            .then(res => res.json())            
             .then(data => {
-                if (data.success) {
-                    const rootContainer = document.querySelector('.checkout-container');
-                    
-                    rootContainer.innerHTML = `
-                        <div class="braga-pix-wrapper">
-                            <h2 class="braga-pix-title">Pedido Gerado com Sucesso! 🚀</h2>
-                            <p class="braga-pix-text">Abra o aplicativo do seu banco e escaneie o código abaixo:</p>
-                            <img src="data:image/jpeg;base64,${data.pix_base64}" style="width: 250px; height: 250px; border-radius: 8px; margin: 20px auto; display: block;" />
-                            <p class="braga-pix-text"><strong>Ou utilize a chave Copia e Cola:</strong></p>
-                            <input type="text" value="${data.pix_copia_cola}" class="braga-pix-input" onclick="this.select(); document.execCommand('copy'); alert('Chave copiada!');" readonly />
-                            <p style="margin-top: 25px;"><span id="status-texto" class="braga-pix-text">Aguardando pagamento... <span class="spin-hourglass">⏳</span></span></p>
-                        </div>
-                    `;
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
 
-                    const checkInterval = setInterval(() => {
-                        fetch(`/wp-json/checkout1/v1/check-status?order_id=${data.order_id}&payment_id=${data.id}`)
-                            .then(res => res.json())
-                            .then(statusData => {
-                                if (statusData.paid) {
-                                    clearInterval(checkInterval);
-                                    document.getElementById('status-texto').innerHTML = '<strong style="color: #2ecc71; font-size: 18px;">Pagamento Confirmado! 🎉 Redirecionando...</strong>';
-                                    
-                                    // Puxa a URL dinâmica da página de "Obrigado" do WooCommerce
-                                    setTimeout(() => { 
-                                        window.location.href = statusData.redirect || data.redirect; 
-                                    }, 1500);
-                                }
-                            })
-                            .catch(err => console.error('[Polling Erro]', err));
-                    }, 3000);
-                } else {
-                    alert('Erro ao gerar PIX: ' + data.error);
+                if (!data.success) {
+                    alert('Erro ao gerar PIX: ' + (data.error || 'Tente novamente.'));
                     btnPix.innerText = 'Finalizar Pedido ➔';
                     btnPix.disabled = false;
+                    return;
                 }
+
+                // Se o PIX já foi aprovado, não precisamos exibir QR Code.
+                if (data.status === 'approved') {
+                    window.location.href = data.redirect;
+                    return;
+                }
+
+                if (
+                    !data.order_id ||
+                    !data.payment_id ||
+                    !data.order_key ||
+                    !data.pix_copia_cola ||
+                    !data.pix_base64
+                ) {
+                    throw new Error('O painel retornou dados incompletos do PIX.');
+                }
+
+                const rootContainer = document.querySelector('.checkout-container');
+
+                // Montagem segura da interface, sem inserir conteúdo externo via innerHTML.
+                const wrapper = document.createElement('div');
+                wrapper.className = 'braga-pix-wrapper';
+
+                const title = document.createElement('h2');
+                title.className = 'braga-pix-title';
+                title.textContent = 'Pedido Gerado com Sucesso! 🚀';
+
+                const description = document.createElement('p');
+                description.className = 'braga-pix-text';
+                description.textContent = 'Abra o aplicativo do seu banco e escaneie o código abaixo:';
+
+                const qr = document.createElement('img');
+                qr.alt = 'QR Code para pagamento PIX';
+                qr.style.cssText = 'width:250px;height:250px;border-radius:8px;margin:20px auto;display:block;';
+                qr.src = 'data:image/png;base64,' + data.pix_base64;
+
+                const codeLabel = document.createElement('p');
+                codeLabel.className = 'braga-pix-text';
+                codeLabel.textContent = 'Ou utilize a chave Copia e Cola:';
+
+                const codeInput = document.createElement('input');
+                codeInput.type = 'text';
+                codeInput.readOnly = true;
+                codeInput.value = data.pix_copia_cola;
+                codeInput.className = 'braga-pix-input';
+
+                codeInput.addEventListener('click', async () => {
+                    codeInput.select();
+
+                    try {
+                        await navigator.clipboard.writeText(codeInput.value);
+                        alert('Código PIX copiado!');
+                    } catch (error) {
+                        document.execCommand('copy');
+                    }
+                });
+
+                const statusText = document.createElement('p');
+                statusText.id = 'status-texto';
+                statusText.className = 'braga-pix-text';
+                statusText.textContent = 'Aguardando pagamento... ⏳';
+
+                wrapper.append(
+                    title,
+                    description,
+                    qr,
+                    codeLabel,
+                    codeInput,
+                    statusText
+                );
+
+                rootContainer.replaceChildren(wrapper);
+
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+
+                // Consulta protegida por order_key e payment_id.
+                const query = new URLSearchParams({
+                    order_id: String(data.order_id),
+                    payment_id: String(data.payment_id),
+                    order_key: data.order_key
+                });
+
+                let attempts = 0;
+                const maxAttempts = 120;
+
+                const checkInterval = setInterval(async () => {
+
+                    attempts++;
+
+                    try {
+                        const response = await fetch(
+                            '/wp-json/checkout1/v1/check-status?' + query.toString(),
+                            { cache: 'no-store' }
+                        );
+
+                        const statusData = await response.json();
+
+                        if (!response.ok || statusData.success === false) {
+                            clearInterval(checkInterval);
+                            statusText.textContent =
+                                'Não foi possível consultar o pagamento. Entre em contato com a loja.';
+                            return;
+                        }
+
+                        if (statusData.paid) {
+                            clearInterval(checkInterval);
+
+                            statusText.textContent =
+                                'Pagamento confirmado! 🎉 Redirecionando...';
+
+                            setTimeout(() => {
+                                window.location.href =
+                                    statusData.redirect || data.redirect;
+                            }, 1500);
+
+                            return;
+                        }
+
+                        if (
+                            ['rejected', 'cancelled'].includes(statusData.status)
+                        ) {
+                            clearInterval(checkInterval);
+
+                            statusText.textContent =
+                                statusData.status === 'rejected'
+                                    ? 'Pagamento recusado. Entre em contato com a loja.'
+                                    : 'Pagamento cancelado.';
+
+                            return;
+                        }
+
+                        if (attempts >= maxAttempts) {
+                            clearInterval(checkInterval);
+
+                            statusText.textContent =
+                                'A consulta automática foi encerrada. Você pode aguardar a confirmação do pagamento na loja.';
+                        }
+
+                    } catch (error) {
+                        console.error('[Polling Erro]', error);
+
+                        if (attempts >= maxAttempts) {
+                            clearInterval(checkInterval);
+                            statusText.textContent =
+                                'Não foi possível continuar a consulta automática.';
+                        }
+                    }
+
+                }, 3000);
+
+            })
+            .catch(error => {
+                console.error('[PIX Checkout]', error);
+                alert(error.message || 'Falha de comunicação ao gerar PIX.');
+                btnPix.innerText = 'Finalizar Pedido ➔';
+                btnPix.disabled = false;
             });
         });
     });
