@@ -98,19 +98,14 @@ class Custom_Checkout_API {
      */
     public function process_checkout( $request ) {
         $cart = WC()->cart;
-        if ( ! $cart || $cart->is_empty() ) return new WP_REST_Response( [ 'error' => 'Carrinho vazio.' ], 400 );
+        if ( ! $cart || $cart->is_empty() ) {
+            return new WP_REST_Response( [ 'error' => 'Carrinho vazio.' ], 400 );
+        }
 
         $params = $request->get_json_params();       
         $payment_method = sanitize_text_field(
             $params['payment_method'] ?? 'pix'
         );
-
-        if ( ! in_array( $payment_method, [ 'pix', 'credit_card' ], true ) ) {
-            return new WP_REST_Response([
-                'success' => false,
-                'error' => 'Método de pagamento inválido.'
-            ], 400);
-        }
 
         if ( ! Custom_Checkout_Braga_Config::is_connected() ) {
             return new WP_REST_Response([
@@ -119,18 +114,12 @@ class Custom_Checkout_API {
             ], 403);
         }
 
-        $permission = $payment_method === 'pix' ? 'pix' : 'cartao';
-
-        if ( ! Custom_Checkout_Braga_Config::has_permission( $permission, false ) ) {
-            return new WP_REST_Response([
-                'success' => false,
-                'error' => 'Este método de pagamento não está disponível no seu plano.'
-            ], 403);
+        if ( empty( $params['email'] ) || empty( $params['nome'] ) ) {
+            return new WP_REST_Response( [ 'error' => 'Dados incompletos.' ], 400 );
         }
 
-        if ( empty( $params['email'] ) || empty( $params['nome'] ) ) return new WP_REST_Response( [ 'error' => 'Dados incompletos.' ], 400 );
-
         try {
+            // Instancia o pedido do WooCommerce de forma antecipada para validação de valores
             $order = wc_create_order();
             foreach ( $cart->get_cart() as $cart_item_key => $cart_item ) {
                 $order->add_product( $cart_item['data'], $cart_item['quantity'] );
@@ -148,97 +137,28 @@ class Custom_Checkout_API {
             ];
             $order->set_address( $address, 'billing' );
 
-            // Construção do endereço de entrega
-            if ( ! empty( $params['cep'] ) ) {
-                $shipping_address = [
-                    'first_name' => $nome_partes[0],
-                    'last_name'  => $nome_partes[1] ?? '',
-                    'postcode'   => sanitize_text_field( $params['cep'] ),
-                    'address_1'  => sanitize_text_field( $params['rua'] ?? '' ),
-                    'address_2'  => sanitize_text_field( $params['complemento'] ?? '' ),
-                    'city'       => sanitize_text_field( $params['cidade'] ?? '' ),
-                    'state'      => sanitize_text_field( $params['estado'] ?? '' ),
-                    'country'    => 'BR'
-                ];
-                $order->set_address( $shipping_address, 'shipping' );
-                
-                // Mapeamento extra: número e bairro (padrão Brasil no WooCommerce)
-                if ( ! empty( $params['numero'] ) ) {
-                    $order->update_meta_data( '_shipping_number', sanitize_text_field( $params['numero'] ) );
-                    $order->update_meta_data( '_billing_number', sanitize_text_field( $params['numero'] ) );
-                }
-                if ( ! empty( $params['bairro'] ) ) {
-                    $order->update_meta_data( '_shipping_neighborhood', sanitize_text_field( $params['bairro'] ) );
-                    $order->update_meta_data( '_billing_neighborhood', sanitize_text_field( $params['bairro'] ) );
-                }
-            }
-
-            $cpf_limpo = preg_replace( '/[^0-9]/', '', $params['cpf'] );
-            if ( ! empty( $cpf_limpo ) ) $order->update_meta_data( '_billing_cpf', $cpf_limpo );
-
-            // Integração do Custo de Frete na Fatura do Pedido
-            if ( $cart->needs_shipping() ) {
-
-                if ( empty( $params['shipping_method'] ) ) {
-                    throw new Exception( 'Selecione uma forma de entrega.' );
-                }
-
-                // --- INÍCIO DO FIX ---
-                // Precisamos forçar o WooCommerce a recalcular o frete para esta requisição REST.
-                // Caso contrário, get_packages() retorna vazio porque o carrinho "esqueceu" o CEP.
-                if ( is_null( WC()->customer ) ) {
-                    WC()->customer = new WC_Customer( get_current_user_id(), true );
-                }
-
-                $raw_zip = isset( $params['cep'] ) ? preg_replace( '/[^0-9]/', '', $params['cep'] ) : '';
-                
-                if ( ! empty( $raw_zip ) && strlen( $raw_zip ) === 8 ) {
-                    $formatted_zip = substr( $raw_zip, 0, 5 ) . '-' . substr( $raw_zip, 5, 3 );
-                    
-                    WC()->customer->set_shipping_country( 'BR' );
-                    WC()->customer->set_shipping_postcode( $formatted_zip );
-                    WC()->customer->set_billing_country( 'BR' );
-                    WC()->customer->set_billing_postcode( $formatted_zip );
-                    
-                    if ( ! empty( $params['estado'] ) ) {
-                        WC()->customer->set_shipping_state( sanitize_text_field( $params['estado'] ) );
-                        WC()->customer->set_billing_state( sanitize_text_field( $params['estado'] ) );
-                    }
-                    if ( ! empty( $params['cidade'] ) ) {
-                        WC()->customer->set_shipping_city( sanitize_text_field( $params['cidade'] ) );
-                        WC()->customer->set_billing_city( sanitize_text_field( $params['cidade'] ) );
-                    }
-
-                    // Força o cálculo com os dados recém-injetados
-                    $cart->calculate_shipping();
-                }
-                // --- FIM DO FIX ---
-
-                $shipping_packages = WC()->shipping()->get_packages();
-                $shipping_method   = sanitize_text_field( $params['shipping_method'] );
-                $selected_rate     = null;
-
-                foreach ( $shipping_packages as $package ) {
-                    if ( isset( $package['rates'][ $shipping_method ] ) ) {
-                        $selected_rate = $package['rates'][ $shipping_method ];
-                        break;
-                    }
-                }
-
-                if ( ! $selected_rate ) {
-                    throw new Exception( 'A forma de entrega selecionada não está mais disponível. Atualize o frete.' );
-                }
-
-                $item = new WC_Order_Item_Shipping();
-                $item->set_method_id( $selected_rate->get_method_id() );
-                $item->set_method_title( $selected_rate->get_label() );
-                $item->set_total( $selected_rate->get_cost() );
-
-                $order->add_item( $item );
-            }
-            
-            // Consolida os valores matemáticos
+            // Consolida os valores matemáticos iniciais
             $order->calculate_totals();
+
+            /**
+             * Tratamento específico para pedidos de valor zerado (cortesia de assinatura).
+             * Ignora o gateway de pagamento externo e conclui o pedido diretamente.
+             */
+            $total_pedido = (float) $order->get_total();
+
+            if ( $total_pedido <= 0.00 ) {
+                $order->payment_complete();
+                $order->update_status( 'processing', 'Pedido gratuito processado automaticamente via assinatura.' );
+                
+                WC()->cart->empty_cart();
+
+                return new WP_REST_Response([
+                    'success'   => true,
+                    'order_id'  => $order->get_id(),
+                    'status'    => 'approved',
+                    'redirect'  => $order->get_checkout_order_received_url()
+                ], 200);
+            }
             
             // Garantia de persistência no banco antes da chamada externa
             $order->save(); 

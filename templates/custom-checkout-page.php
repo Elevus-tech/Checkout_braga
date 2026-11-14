@@ -95,8 +95,6 @@ $cart_total_float = number_format( (float) $cart->get_total( 'edit' ), 2, '.', '
     
     @keyframes spin-hourglass { 0% { transform: rotate(0deg); } 50% { transform: rotate(180deg); } 100% { transform: rotate(180deg); } }
     .spin-hourglass { display: inline-block; animation: spin-hourglass 2s infinite ease-in-out; }
-    /* Força a cor branca nos textos do formulário do MP */
-    
 </style>
 
 <div id="custom-checkout-root" class="braga-checkout-root">
@@ -308,537 +306,574 @@ $cart_total_float = number_format( (float) $cart->get_total( 'edit' ), 2, '.', '
 
     <!-- SCRIPTS DE LÓGICA E ESTADO -->
     <script>
-    document.addEventListener('DOMContentLoaded', function() {
-        const mpPublicKey = '<?php echo esc_js($mp_public_key); ?>';
-        
-        const btnContinuar = document.getElementById('btn-continuar');
-        const step1Container = document.getElementById('step-1-container');
-        const stepPagamentoContainer = document.getElementById('step-pagamento-container');
-        const conteudoPagamento = document.getElementById('conteudo-pagamento');
-        
-        let brickController = null; 
-        
-        window.checkoutSubtotalBase = parseFloat('<?php echo $cart_total_float; ?>') || 0;
-        window.checkoutTotalFinal = parseFloat('<?php echo $cart_total_float; ?>') || 0;
+        /**
+         * Oculta dinamicamente a seção de pagamento e exibe um aviso amigável 
+         * caso o valor total do pedido seja equivalente a zero (cortesia de assinatura).
+         * 
+         * @param {number} total Valor total atual do carrinho.
+         */
+        function handleZeroValueCheckout(total) {
+            const paymentContainer = document.getElementById('step-pagamento-container');
+            const freeNoticeId = 'braga-free-subscription-notice';
 
-        const needsShipping = <?php echo $needs_shipping ? 'true' : 'false'; ?>;
-        const stepEntregaContainer = document.getElementById('step-entrega-container');
-        const conteudoEntrega = document.getElementById('conteudo-entrega');
-        
-        // --- TRANSIÇÕES DE AVANÇO --- //
+            if (!paymentContainer) return;
 
-        btnContinuar.addEventListener('click', function(e) {
-            e.preventDefault();
-            const email = document.getElementById('chk-email').value.trim();
-            const nome = document.getElementById('chk-nome').value.trim();
-            const cpf = document.getElementById('chk-cpf').value.trim();
+            if (total <= 0) {
+                paymentContainer.style.display = 'none';
 
-            if (!email || !nome || !cpf) {
-                alert('Preencha E-mail, Nome e CPF para continuar.');
-                return;
-            }
-
-            btnContinuar.innerText = 'DADOS CONFIRMADOS ✔';
-            btnContinuar.style.background = '';
-            btnContinuar.disabled = true;
-            
-            step1Container.classList.remove('active');
-            step1Container.classList.add('disabled');
-
-            if (needsShipping) {
-                stepEntregaContainer.classList.remove('disabled');
-                stepEntregaContainer.classList.add('active');
-                conteudoEntrega.style.display = 'block';
+                if (!document.getElementById(freeNoticeId)) {
+                    const noticeBox = document.createElement('div');
+                    noticeBox.id = freeNoticeId;
+                    noticeBox.className = 'braga-panel';
+                    noticeBox.style.cssText = 'margin-top: 20px; border-color: #2ecc71; background: rgba(46, 204, 113, 0.05); text-align: center; padding: 20px;';
+                    noticeBox.innerHTML = `
+                        <h3 style="color: #2ecc71; margin-top: 0;">🎉 Benefício de Assinatura Ativo</h3>
+                        <p style="color: #ccc; margin-bottom: 0;">Este produto digital é 100% gratuito para assinantes. Nenhum pagamento é necessário.</p>
+                    `;
+                    paymentContainer.parentNode.appendChild(noticeBox);
+                }
             } else {
-                ativarEtapaPagamento();
-            }
-        });
-
-        document.getElementById('btn-continuar-pagamento').addEventListener('click', function(e) {
-            e.preventDefault();
-            this.innerText = 'FRETE CONFIRMADO ✔';
-            this.disabled = true;
-            this.style.background = '';
-            
-            stepEntregaContainer.classList.remove('active');
-            stepEntregaContainer.classList.add('disabled');
-            
-            ativarEtapaPagamento();
-        });
-
-        function ativarEtapaPagamento() {
-            stepPagamentoContainer.classList.remove('disabled');
-            stepPagamentoContainer.classList.add('active');
-            conteudoPagamento.style.display = 'block';
-            
-            const isCreditCardSelected = document.querySelector('input[name="payment_method"][value="credit_card"]').checked;
-            if (isCreditCardSelected && mpPublicKey) {
-                renderCardBrick();
+                paymentContainer.style.display = 'block';
+                const existingNotice = document.getElementById(freeNoticeId);
+                if (existingNotice) {
+                    existingNotice.remove();
+                }
             }
         }
 
-        // --- TRANSIÇÕES DE RETORNO --- //
+        document.addEventListener('DOMContentLoaded', function() {
+            const mpPublicKey = '<?php echo esc_js($mp_public_key); ?>';
+            
+            const btnContinuar = document.getElementById('btn-continuar');
+            const step1Container = document.getElementById('step-1-container');
+            const stepPagamentoContainer = document.getElementById('step-pagamento-container');
+            const conteudoPagamento = document.getElementById('conteudo-pagamento');
+            
+            let brickController = null; 
+            
+            window.checkoutSubtotalBase = parseFloat('<?php echo $cart_total_float; ?>') || 0;
+            window.checkoutTotalFinal = parseFloat('<?php echo $cart_total_float; ?>') || 0;
 
-        document.getElementById('btn-voltar-step1').addEventListener('click', function(e) {
-            e.preventDefault();
-            stepEntregaContainer.classList.remove('active');
-            stepEntregaContainer.classList.add('disabled');
-            conteudoEntrega.style.display = 'none';
+            // Executa a validação de valor zerado após declarar as variáveis globais
+            handleZeroValueCheckout(window.checkoutTotalFinal);
 
-            step1Container.classList.remove('disabled');
-            step1Container.classList.add('active');
-            btnContinuar.innerText = 'Continuar ➔';
-            btnContinuar.disabled = false;
-        });
+            const needsShipping = <?php echo $needs_shipping ? 'true' : 'false'; ?>;
+            const stepEntregaContainer = document.getElementById('step-entrega-container');
+            const conteudoEntrega = document.getElementById('conteudo-entrega');
+            
+            // --- TRANSIÇÕES DE AVANÇO --- //
 
-        function voltarDaEtapaPagamento(e) {
-            e.preventDefault();
-            stepPagamentoContainer.classList.remove('active');
-            stepPagamentoContainer.classList.add('disabled');
-            conteudoPagamento.style.display = 'none';
+            btnContinuar.addEventListener('click', function(e) {
+                e.preventDefault();
+                const email = document.getElementById('chk-email').value.trim();
+                const nome = document.getElementById('chk-nome').value.trim();
+                const cpf = document.getElementById('chk-cpf').value.trim();
 
-            if (needsShipping) {
-                stepEntregaContainer.classList.remove('disabled');
-                stepEntregaContainer.classList.add('active');
-                conteudoEntrega.style.display = 'block';
-                const btnPgto = document.getElementById('btn-continuar-pagamento');
-                btnPgto.innerText = 'Ir para Pagamento ➔';
-                btnPgto.disabled = false;
-            } else {
+                if (!email || !nome || !cpf) {
+                    alert('Preencha E-mail, Nome e CPF para continuar.');
+                    return;
+                }
+
+                btnContinuar.innerText = 'DADOS CONFIRMADOS ✔';
+                btnContinuar.style.background = '';
+                btnContinuar.disabled = true;
+                
+                step1Container.classList.remove('active');
+                step1Container.classList.add('disabled');
+
+                if (needsShipping) {
+                    stepEntregaContainer.classList.remove('disabled');
+                    stepEntregaContainer.classList.add('active');
+                    conteudoEntrega.style.display = 'block';
+                } else {
+                    ativarEtapaPagamento();
+                }
+            });
+
+            document.getElementById('btn-continuar-pagamento').addEventListener('click', function(e) {
+                e.preventDefault();
+                this.innerText = 'FRETE CONFIRMADO ✔';
+                this.disabled = true;
+                this.style.background = '';
+                
+                stepEntregaContainer.classList.remove('active');
+                stepEntregaContainer.classList.add('disabled');
+                
+                ativarEtapaPagamento();
+            });
+
+            function ativarEtapaPagamento() {
+                stepPagamentoContainer.classList.remove('disabled');
+                stepPagamentoContainer.classList.add('active');
+                conteudoPagamento.style.display = 'block';
+                
+                const isCreditCardSelected = document.querySelector('input[name="payment_method"][value="credit_card"]').checked;
+                if (isCreditCardSelected && mpPublicKey) {
+                    renderCardBrick();
+                }
+            }
+
+            // --- TRANSIÇÕES DE RETORNO --- //
+
+            document.getElementById('btn-voltar-step1').addEventListener('click', function(e) {
+                e.preventDefault();
+                stepEntregaContainer.classList.remove('active');
+                stepEntregaContainer.classList.add('disabled');
+                conteudoEntrega.style.display = 'none';
+
                 step1Container.classList.remove('disabled');
                 step1Container.classList.add('active');
                 btnContinuar.innerText = 'Continuar ➔';
                 btnContinuar.disabled = false;
-            }
-        }
+            });
 
-        document.getElementById('btn-voltar-step2').addEventListener('click', voltarDaEtapaPagamento);
-        document.getElementById('btn-voltar-step2-cc').addEventListener('click', voltarDaEtapaPagamento);
+            function voltarDaEtapaPagamento(e) {
+                e.preventDefault();
+                stepPagamentoContainer.classList.remove('active');
+                stepPagamentoContainer.classList.add('disabled');
+                conteudoPagamento.style.display = 'none';
 
-        // --- LÓGICA DE FRETE --- //
-
-        document.getElementById('btn-calcular-frete').addEventListener('click', function(e) {
-            e.preventDefault();
-            const btn = this;
-            const cepInput = document.getElementById('chk-cep').value.replace(/\D/g, '');
-            
-            if (cepInput.length !== 8) {
-                alert('Informe um CEP válido com 8 dígitos.');
-                return;
-            }
-
-            btn.innerText = '...';
-            btn.disabled = true;
-
-            fetch(`https://viacep.com.br/ws/${cepInput}/json/`)
-                .then(res => res.json())
-                .then(viaCepData => {
-                    if (viaCepData.erro) throw new Error('CEP não encontrado');
-                    
-                    document.getElementById('chk-rua').value = viaCepData.logradouro || '';
-                    document.getElementById('chk-bairro').value = viaCepData.bairro || '';
-                    document.getElementById('chk-cidade').value = viaCepData.localidade || '';
-                    document.getElementById('chk-estado').value = viaCepData.uf || '';
-                    
-                    document.getElementById('endereco-completo-container').style.display = 'flex';
-                    document.getElementById('chk-numero').focus();
-
-                    return fetch('/wp-json/checkout1/v1/calculate-shipping', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ 
-                            zipcode: cepInput,
-                            city: viaCepData.localidade,
-                            state: viaCepData.uf
-                        })
-                    });
-                })
-                .then(res => res.json())
-                .then(data => {
-                    btn.innerText = 'Calcular';
-                    btn.disabled = false;
-
-                    if (data.success && data.methods.length > 0) {
-                        window.checkoutSubtotalBase = data.subtotal;
-                        let html = '';
-                        
-                        data.methods.forEach((method, index) => {
-                            const checked = index === 0 ? 'checked' : '';
-                            html += `
-                                <label style="display: flex; justify-content: space-between; align-items: center; border: 1px solid rgba(255,255,255,0.2); padding: 12px; border-radius: 6px; cursor: pointer; background: rgba(255,255,255,0.05); transition: all 0.2s;">
-                                    <div style="display: flex; align-items: center; gap: 8px; max-width: calc(100% - 80px); overflow: hidden;">
-                                        <input type="radio" name="shipping_method" value="${method.id}" data-cost="${method.cost}" ${checked} style="flex-shrink: 0;">
-                                        <span class="braga-shipping-name" style="font-size: 12px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${method.label}">${method.label}</span>
-                                    </div>
-                                    <strong style="color: #2ecc71; font-size: 14px;">R$ ${method.cost.toFixed(2).replace('.', ',')}</strong>
-                                </label>
-                            `;
-                        });
-                        
-                        document.getElementById('opcoes-frete-container').innerHTML = html;
-                        document.getElementById('btn-continuar-pagamento').style.display = 'block';
-
-                        const radiosFrete = document.querySelectorAll('input[name="shipping_method"]');
-                        radiosFrete.forEach(radio => {
-                            radio.addEventListener('change', (ev) => {
-                                let custo = parseFloat(ev.target.getAttribute('data-cost')) || 0;
-                                window.checkoutTotalFinal = window.checkoutSubtotalBase + custo;
-                                
-                                document.getElementById('resumo-frete-row').style.display = 'flex';
-                                document.getElementById('resumo-frete-valor').innerText = 'R$ ' + custo.toFixed(2).replace('.', ',');
-                                document.getElementById('resumo-total-price').innerText = 'R$ ' + window.checkoutTotalFinal.toFixed(2).replace('.', ',');
-                                
-                                if (brickController) {
-                                    brickController.unmount();
-                                    brickController = null;
-                                    if(document.getElementById('cc-container').style.display === 'block' && mpPublicKey) {
-                                        renderCardBrick();
-                                    }
-                                }
-                            });
-                        });
-                        
-                        const firstRadio = document.querySelector('input[name="shipping_method"]:checked');
-                        if (firstRadio) firstRadio.dispatchEvent(new Event('change'));
-
-                    } else {
-                        document.getElementById('opcoes-frete-container').innerHTML = '<p style="color: #e74c3c;">Nenhum frete retornado pelas transportadoras.</p>';
-                        document.getElementById('resumo-frete-row').style.display = 'none';
-                        window.checkoutTotalFinal = window.checkoutSubtotalBase;
-                        document.getElementById('resumo-total-price').innerText = 'R$ ' + window.checkoutTotalFinal.toFixed(2).replace('.', ',');
-                    }
-                })
-                .catch(err => {
-                    btn.innerText = 'Calcular';
-                    btn.disabled = false;
-                    alert('Erro ao buscar o CEP ou calcular frete.');
-                    console.error(err);
-                });
-        });
-
-        // --- LÓGICA DE PAGAMENTO (ABAS E SDK) --- //
-        const radios = document.querySelectorAll('input[name="payment_method"]');
-        const pixContainer = document.getElementById('pix-container');
-        const ccContainer = document.getElementById('cc-container');
-
-        radios.forEach(radio => {
-            radio.addEventListener('change', (e) => {
-                radios.forEach(r => {
-                    r.parentElement.style.borderColor = 'rgba(255,255,255,0.2)';
-                    r.parentElement.style.background = 'transparent';
-                    r.nextElementSibling.style.opacity = '0.6';
-                });
-                
-                if (e.target.value === 'pix') {
-                    e.target.parentElement.style.borderColor = '#2ecc71';
-                    e.target.parentElement.style.background = 'rgba(46, 204, 113, 0.1)';
-                    e.target.nextElementSibling.style.opacity = '1';
-                    
-                    pixContainer.style.display = 'block';
-                    ccContainer.style.display = 'none';
+                if (needsShipping) {
+                    stepEntregaContainer.classList.remove('disabled');
+                    stepEntregaContainer.classList.add('active');
+                    conteudoEntrega.style.display = 'block';
+                    const btnPgto = document.getElementById('btn-continuar-pagamento');
+                    btnPgto.innerText = 'Ir para Pagamento ➔';
+                    btnPgto.disabled = false;
                 } else {
-                    e.target.parentElement.style.borderColor = '#3498db';
-                    e.target.parentElement.style.background = 'rgba(52, 152, 219, 0.1)';
-                    e.target.nextElementSibling.style.opacity = '1';
+                    step1Container.classList.remove('disabled');
+                    step1Container.classList.add('active');
+                    btnContinuar.innerText = 'Continuar ➔';
+                    btnContinuar.disabled = false;
+                }
+            }
 
-                    pixContainer.style.display = 'none';
-                    ccContainer.style.display = 'block';
+            document.getElementById('btn-voltar-step2').addEventListener('click', voltarDaEtapaPagamento);
+            document.getElementById('btn-voltar-step2-cc').addEventListener('click', voltarDaEtapaPagamento);
+
+            // --- LÓGICA DE FRETE --- //
+
+            document.getElementById('btn-calcular-frete').addEventListener('click', function(e) {
+                e.preventDefault();
+                const btn = this;
+                const cepInput = document.getElementById('chk-cep').value.replace(/\D/g, '');
+                
+                if (cepInput.length !== 8) {
+                    alert('Informe um CEP válido com 8 dígitos.');
+                    return;
+                }
+
+                btn.innerText = '...';
+                btn.disabled = true;
+
+                fetch(`https://viacep.com.br/ws/${cepInput}/json/`)
+                    .then(res => res.json())
+                    .then(viaCepData => {
+                        if (viaCepData.erro) throw new Error('CEP não encontrado');
+                        
+                        document.getElementById('chk-rua').value = viaCepData.logradouro || '';
+                        document.getElementById('chk-bairro').value = viaCepData.bairro || '';
+                        document.getElementById('chk-cidade').value = viaCepData.localidade || '';
+                        document.getElementById('chk-estado').value = viaCepData.uf || '';
+                        
+                        document.getElementById('endereco-completo-container').style.display = 'flex';
+                        document.getElementById('chk-numero').focus();
+
+                        return fetch('/wp-json/checkout1/v1/calculate-shipping', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ 
+                                zipcode: cepInput,
+                                city: viaCepData.localidade,
+                                state: viaCepData.uf
+                            })
+                        });
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        btn.innerText = 'Calcular';
+                        btn.disabled = false;
+
+                        if (data.success && data.methods.length > 0) {
+                            window.checkoutSubtotalBase = data.subtotal;
+                            let html = '';
+                            
+                            data.methods.forEach((method, index) => {
+                                const checked = index === 0 ? 'checked' : '';
+                                html += `
+                                    <label style="display: flex; justify-content: space-between; align-items: center; border: 1px solid rgba(255,255,255,0.2); padding: 12px; border-radius: 6px; cursor: pointer; background: rgba(255,255,255,0.05); transition: all 0.2s;">
+                                        <div style="display: flex; align-items: center; gap: 8px; max-width: calc(100% - 80px); overflow: hidden;">
+                                            <input type="radio" name="shipping_method" value="${method.id}" data-cost="${method.cost}" ${checked} style="flex-shrink: 0;">
+                                            <span class="braga-shipping-name" style="font-size: 12px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${method.label}">${method.label}</span>
+                                        </div>
+                                        <strong style="color: #2ecc71; font-size: 14px;">R$ ${method.cost.toFixed(2).replace('.', ',')}</strong>
+                                    </label>
+                                `;
+                            });
+                            
+                            document.getElementById('opcoes-frete-container').innerHTML = html;
+                            document.getElementById('btn-continuar-pagamento').style.display = 'block';
+
+                            const radiosFrete = document.querySelectorAll('input[name="shipping_method"]');
+                            radiosFrete.forEach(radio => {
+                                radio.addEventListener('change', (ev) => {
+                                    let custo = parseFloat(ev.target.getAttribute('data-cost')) || 0;
+                                    window.checkoutTotalFinal = window.checkoutSubtotalBase + custo;
+                                    
+                                    document.getElementById('resumo-frete-row').style.display = 'flex';
+                                    document.getElementById('resumo-frete-valor').innerText = 'R$ ' + custo.toFixed(2).replace('.', ',');
+                                    document.getElementById('resumo-total-price').innerText = 'R$ ' + window.checkoutTotalFinal.toFixed(2).replace('.', ',');
+                                    
+                                    handleZeroValueCheckout(window.checkoutTotalFinal);
+
+                                    if (brickController) {
+                                        brickController.unmount();
+                                        brickController = null;
+                                        if(document.getElementById('cc-container').style.display === 'block' && mpPublicKey) {
+                                            renderCardBrick();
+                                        }
+                                    }
+                                });
+                            });
+                            
+                            const firstRadio = document.querySelector('input[name="shipping_method"]:checked');
+                            if (firstRadio) firstRadio.dispatchEvent(new Event('change'));
+
+                        } else {
+                            document.getElementById('opcoes-frete-container').innerHTML = '<p style="color: #e74c3c;">Nenhum frete retornado pelas transportadoras.</p>';
+                            document.getElementById('resumo-frete-row').style.display = 'none';
+                            window.checkoutTotalFinal = window.checkoutSubtotalBase;
+                            document.getElementById('resumo-total-price').innerText = 'R$ ' + window.checkoutTotalFinal.toFixed(2).replace('.', ',');
+                            handleZeroValueCheckout(window.checkoutTotalFinal);
+                        }
+                    })
+                    .catch(err => {
+                        btn.innerText = 'Calcular';
+                        btn.disabled = false;
+                        alert('Erro ao buscar o CEP ou calcular frete.');
+                        console.error(err);
+                    });
+            });
+
+            // --- LÓGICA DE PAGAMENTO (ABAS E SDK) --- //
+            const radios = document.querySelectorAll('input[name="payment_method"]');
+            const pixContainer = document.getElementById('pix-container');
+            const ccContainer = document.getElementById('cc-container');
+
+            radios.forEach(radio => {
+                radio.addEventListener('change', (e) => {
+                    radios.forEach(r => {
+                        r.parentElement.style.borderColor = 'rgba(255,255,255,0.2)';
+                        r.parentElement.style.background = 'transparent';
+                        r.nextElementSibling.style.opacity = '0.6';
+                    });
                     
-                    if (!brickController && mpPublicKey) {
-                        renderCardBrick();
+                    if (e.target.value === 'pix') {
+                        e.target.parentElement.style.borderColor = '#2ecc71';
+                        e.target.parentElement.style.background = 'rgba(46, 204, 113, 0.1)';
+                        e.target.nextElementSibling.style.opacity = '1';
+                        
+                        pixContainer.style.display = 'block';
+                        ccContainer.style.display = 'none';
+                    } else {
+                        e.target.parentElement.style.borderColor = '#3498db';
+                        e.target.parentElement.style.background = 'rgba(52, 152, 219, 0.1)';
+                        e.target.nextElementSibling.style.opacity = '1';
+
+                        pixContainer.style.display = 'none';
+                        ccContainer.style.display = 'block';
+                        
+                        if (!brickController && mpPublicKey) {
+                            renderCardBrick();
+                        }
                     }
+                });
+            });
+
+            const renderCardBrick = async () => {
+                const mp = new MercadoPago(mpPublicKey, { locale: 'pt-BR' });
+                const bricksBuilder = mp.bricks();
+
+                const settings = {
+                    initialization: {
+                        amount: window.checkoutTotalFinal, 
+                        payer: { email: document.getElementById('chk-email').value.trim() },
+                    },
+                    customization: {
+                        visual: {
+                            style: { 
+                                theme: document.getElementById('theme-selector').value,
+                                customVariables: {
+                                    formBackgroundColor: '#0b0914',
+                                    baseColor: '#B414DE',
+                                    textPrimaryColor: '#ffffff',
+                                    textSecondaryColor: '#cccccc'
+                                }
+                            }
+                        },
+                        paymentMethods: { maxInstallments: 12 }
+                    },
+                    callbacks: {
+                        onReady: () => {},
+                        onSubmit: (cardFormData) => {
+                            return new Promise((resolve, reject) => {
+                                const selectedShipping = document.querySelector('input[name="shipping_method"]:checked');
+                                
+                                const payload = {
+                                    email: document.getElementById('chk-email').value.trim(),
+                                    nome: document.getElementById('chk-nome').value.trim(),
+                                    cpf: document.getElementById('chk-cpf').value.trim(),
+                                    telefone: document.getElementById('chk-telefone').value.trim(),
+                                    
+                                    cep: document.getElementById('chk-cep') ? document.getElementById('chk-cep').value.replace(/\D/g, '') : '',
+                                    rua: document.getElementById('chk-rua') ? document.getElementById('chk-rua').value : '',
+                                    numero: document.getElementById('chk-numero') ? document.getElementById('chk-numero').value : '',
+                                    complemento: document.getElementById('chk-complemento') ? document.getElementById('chk-complemento').value : '',
+                                    bairro: document.getElementById('chk-bairro') ? document.getElementById('chk-bairro').value : '',
+                                    cidade: document.getElementById('chk-cidade') ? document.getElementById('chk-cidade').value : '',
+                                    estado: document.getElementById('chk-estado') ? document.getElementById('chk-estado').value : '',
+                                    shipping_method: selectedShipping ? selectedShipping.value : '',
+                                    
+                                    payment_method: 'credit_card',
+                                    token: cardFormData.token,
+                                    installments: cardFormData.installments,
+                                    payment_method_id: cardFormData.payment_method_id,
+                                    issuer_id: cardFormData.issuer_id
+                                };
+
+                                fetch('/wp-json/checkout1/v1/process', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify(payload)
+                                })
+                                .then(res => res.json())
+                                .then(data => {
+                                    if (data.success) {
+                                        window.location.href = data.redirect;
+                                        resolve();
+                                    } else {
+                                        alert('Transação recusada: ' + data.error);
+                                        reject();
+                                    }
+                                })
+                                .catch(err => {
+                                    console.error(err);
+                                    alert('Erro de comunicação.');
+                                    reject();
+                                });
+                            });
+                        },
+                        onError: (error) => { console.error('[MP Gateway] Erro no Brick:', error); }
+                    }
+                };
+                
+                brickController = await bricksBuilder.create('cardPayment', 'cardPaymentBrick_container', settings);
+            };
+
+            document.getElementById('theme-selector').addEventListener('change', function() {
+                if (brickController && document.getElementById('cc-container').style.display === 'block') {
+                    brickController.unmount();
+                    brickController = null;
+                    renderCardBrick();
                 }
             });
-        });
 
-        const renderCardBrick = async () => {
-            const mp = new MercadoPago(mpPublicKey, { locale: 'pt-BR' });
-            const bricksBuilder = mp.bricks();
+            // PIX Finalizar
+            document.getElementById('btn-finalizar-pix').addEventListener('click', function(e) {
+                e.preventDefault();
+                const btnPix = this;
+                const selectedShipping = document.querySelector('input[name="shipping_method"]:checked');
+                
+                const payload = {
+                    email: document.getElementById('chk-email').value.trim(),
+                    nome: document.getElementById('chk-nome').value.trim(),
+                    cpf: document.getElementById('chk-cpf').value.trim(),
+                    telefone: document.getElementById('chk-telefone').value.trim(),
+                    
+                    cep: document.getElementById('chk-cep') ? document.getElementById('chk-cep').value.replace(/\D/g, '') : '',
+                    rua: document.getElementById('chk-rua') ? document.getElementById('chk-rua').value : '',
+                    numero: document.getElementById('chk-numero') ? document.getElementById('chk-numero').value : '',
+                    complemento: document.getElementById('chk-complemento') ? document.getElementById('chk-complemento').value : '',
+                    bairro: document.getElementById('chk-bairro') ? document.getElementById('chk-bairro').value : '',
+                    cidade: document.getElementById('chk-cidade') ? document.getElementById('chk-cidade').value : '',
+                    estado: document.getElementById('chk-estado') ? document.getElementById('chk-estado').value : '',
+                    shipping_method: selectedShipping ? selectedShipping.value : '',
+                    
+                    payment_method: 'pix'
+                };
 
-            const settings = {
-                initialization: {
-                    amount: window.checkoutTotalFinal, // Agora é Float garantido!
-                    payer: { email: document.getElementById('chk-email').value.trim() },
-                },
-                customization: {
-                    visual: {
-                        style: { 
-                            // Puxa o tema dinamicamente do Select na tela
-                            theme: document.getElementById('theme-selector').value,
-                            customVariables: {
-                                formBackgroundColor: '#0b0914',
-                                baseColor: '#B414DE',
-                                textPrimaryColor: '#ffffff',
-                                textSecondaryColor: '#cccccc'
+                btnPix.innerText = 'Gerando PIX...';
+                btnPix.disabled = true;
+
+                fetch('/wp-json/checkout1/v1/process', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                })
+                .then(res => res.json())            
+                .then(data => {
+
+                    if (!data.success) {
+                        alert('Erro ao gerar PIX: ' + (data.error || 'Tente novamente.'));
+                        btnPix.innerText = 'Finalizar Pedido ➔';
+                        btnPix.disabled = false;
+                        return;
+                    }
+
+                    if (data.status === 'approved') {
+                        window.location.href = data.redirect;
+                        return;
+                    }
+
+                    if (
+                        !data.order_id ||
+                        !data.payment_id ||
+                        !data.order_key ||
+                        !data.pix_copia_cola ||
+                        !data.pix_base64
+                    ) {
+                        throw new Error('O painel retornou dados incompletos do PIX.');
+                    }
+
+                    const rootContainer = document.querySelector('.checkout-container');
+
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'braga-pix-wrapper';
+
+                    const title = document.createElement('h2');
+                    title.className = 'braga-pix-title';
+                    title.textContent = 'Pedido Gerado com Sucesso! 🚀';
+
+                    const description = document.createElement('p');
+                    description.className = 'braga-pix-text';
+                    description.textContent = 'Abra o aplicativo do seu banco e escaneie o código abaixo:';
+
+                    const qr = document.createElement('img');
+                    qr.alt = 'QR Code para pagamento PIX';
+                    qr.style.cssText = 'width:250px;height:250px;border-radius:8px;margin:20px auto;display:block;';
+                    qr.src = 'data:image/png;base64,' + data.pix_base64;
+
+                    const codeLabel = document.createElement('p');
+                    codeLabel.className = 'braga-pix-text';
+                    codeLabel.textContent = 'Ou utilize a chave Copia e Cola:';
+
+                    const codeInput = document.createElement('input');
+                    codeInput.type = 'text';
+                    codeInput.readOnly = true;
+                    codeInput.value = data.pix_copia_cola;
+                    codeInput.className = 'braga-pix-input';
+
+                    codeInput.addEventListener('click', async () => {
+                        codeInput.select();
+
+                        try {
+                            await navigator.clipboard.writeText(codeInput.value);
+                            alert('Código PIX copiado!');
+                        } catch (error) {
+                            document.execCommand('copy');
+                        }
+                    });
+
+                    const statusText = document.createElement('p');
+                    statusText.id = 'status-texto';
+                    statusText.className = 'braga-pix-text';
+                    statusText.textContent = 'Aguardando pagamento... ⏳';
+
+                    wrapper.append(
+                        title,
+                        description,
+                        qr,
+                        codeLabel,
+                        codeInput,
+                        statusText
+                    );
+
+                    rootContainer.replaceChildren(wrapper);
+
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+                    const query = new URLSearchParams({
+                        order_id: String(data.order_id),
+                        payment_id: String(data.payment_id),
+                        order_key: data.order_key
+                    });
+
+                    let attempts = 0;
+                    const maxAttempts = 120;
+
+                    const checkInterval = setInterval(async () => {
+
+                        attempts++;
+
+                        try {
+                            const response = await fetch(
+                                '/wp-json/checkout1/v1/check-status?' + query.toString(),
+                                { cache: 'no-store' }
+                            );
+
+                            const statusData = await response.json();
+
+                            if (!response.ok || statusData.success === false) {
+                                clearInterval(checkInterval);
+                                statusText.textContent =
+                                    'Não foi possível consultar o pagamento. Entre em contato com a loja.';
+                                return;
+                            }
+
+                            if (statusData.paid) {
+                                clearInterval(checkInterval);
+
+                                statusText.textContent =
+                                    'Pagamento confirmado! 🎉 Redirecionando...';
+
+                                setTimeout(() => {
+                                    window.location.href =
+                                        statusData.redirect || data.redirect;
+                                }, 1500);
+
+                                return;
+                            }
+
+                            if (
+                                ['rejected', 'cancelled'].includes(statusData.status)
+                            ) {
+                                clearInterval(checkInterval);
+
+                                statusText.textContent =
+                                    statusData.status === 'rejected'
+                                        ? 'Pagamento recusado. Entre em contato com a loja.'
+                                        : 'Pagamento cancelado.';
+
+                                return;
+                            }
+
+                            if (attempts >= maxAttempts) {
+                                clearInterval(checkInterval);
+
+                                statusText.textContent =
+                                    'A consulta automática foi encerrada. Você pode aguardar a confirmação do pagamento na loja.';
+                            }
+
+                        } catch (error) {
+                            console.error('[Polling Erro]', error);
+
+                            if (attempts >= maxAttempts) {
+                                clearInterval(checkInterval);
+                                statusText.textContent =
+                                    'Não foi possível continuar a consulta automática.';
                             }
                         }
-                    },
-                    paymentMethods: { maxInstallments: 12 } // Aqui a gente trava em 12x
-                },
-                callbacks: {
-                    onReady: () => {},
-                    onSubmit: (cardFormData) => {
-                        return new Promise((resolve, reject) => {
-                            const selectedShipping = document.querySelector('input[name="shipping_method"]:checked');
-                            
-                            const payload = {
-                                email: document.getElementById('chk-email').value.trim(),
-                                nome: document.getElementById('chk-nome').value.trim(),
-                                cpf: document.getElementById('chk-cpf').value.trim(),
-                                telefone: document.getElementById('chk-telefone').value.trim(),
-                                
-                                cep: document.getElementById('chk-cep') ? document.getElementById('chk-cep').value.replace(/\D/g, '') : '',
-                                rua: document.getElementById('chk-rua') ? document.getElementById('chk-rua').value : '',
-                                numero: document.getElementById('chk-numero') ? document.getElementById('chk-numero').value : '',
-                                complemento: document.getElementById('chk-complemento') ? document.getElementById('chk-complemento').value : '',
-                                bairro: document.getElementById('chk-bairro') ? document.getElementById('chk-bairro').value : '',
-                                cidade: document.getElementById('chk-cidade') ? document.getElementById('chk-cidade').value : '',
-                                estado: document.getElementById('chk-estado') ? document.getElementById('chk-estado').value : '',
-                                shipping_method: selectedShipping ? selectedShipping.value : '',
-                                
-                                payment_method: 'credit_card',
-                                token: cardFormData.token,
-                                installments: cardFormData.installments,
-                                payment_method_id: cardFormData.payment_method_id,
-                                issuer_id: cardFormData.issuer_id
-                            };
 
-                            fetch('/wp-json/checkout1/v1/process', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(payload)
-                            })
-                            .then(res => res.json())
-                            .then(data => {
-                                if (data.success) {
-                                    window.location.href = data.redirect;
-                                    resolve();
-                                } else {
-                                    alert('Transação recusada: ' + data.error);
-                                    reject();
-                                }
-                            })
-                            .catch(err => {
-                                console.error(err);
-                                alert('Erro de comunicação.');
-                                reject();
-                            });
-                        });
-                    },
-                    onError: (error) => { console.error('[MP Gateway] Erro no Brick:', error); }
-                }
-            };
-            
-            brickController = await bricksBuilder.create('cardPayment', 'cardPaymentBrick_container', settings);
-        };
-        // EVENT LISTENER DO TEMA: Desmonta e remonta o Brick se o cliente trocar o tema
-        document.getElementById('theme-selector').addEventListener('change', function() {
-            if (brickController && document.getElementById('cc-container').style.display === 'block') {
-                brickController.unmount();
-                brickController = null;
-                renderCardBrick();
-            }
-        });
+                    }, 3000);
 
-        // PIX Finalizar
-        document.getElementById('btn-finalizar-pix').addEventListener('click', function(e) {
-            e.preventDefault();
-            const btnPix = this;
-            const selectedShipping = document.querySelector('input[name="shipping_method"]:checked');
-            
-            const payload = {
-                email: document.getElementById('chk-email').value.trim(),
-                nome: document.getElementById('chk-nome').value.trim(),
-                cpf: document.getElementById('chk-cpf').value.trim(),
-                telefone: document.getElementById('chk-telefone').value.trim(),
-                
-                cep: document.getElementById('chk-cep') ? document.getElementById('chk-cep').value.replace(/\D/g, '') : '',
-                rua: document.getElementById('chk-rua') ? document.getElementById('chk-rua').value : '',
-                numero: document.getElementById('chk-numero') ? document.getElementById('chk-numero').value : '',
-                complemento: document.getElementById('chk-complemento') ? document.getElementById('chk-complemento').value : '',
-                bairro: document.getElementById('chk-bairro') ? document.getElementById('chk-bairro').value : '',
-                cidade: document.getElementById('chk-cidade') ? document.getElementById('chk-cidade').value : '',
-                estado: document.getElementById('chk-estado') ? document.getElementById('chk-estado').value : '',
-                shipping_method: selectedShipping ? selectedShipping.value : '',
-                
-                payment_method: 'pix'
-            };
-
-            btnPix.innerText = 'Gerando PIX...';
-            btnPix.disabled = true;
-
-            fetch('/wp-json/checkout1/v1/process', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            })
-            .then(res => res.json())            
-            .then(data => {
-
-                if (!data.success) {
-                    alert('Erro ao gerar PIX: ' + (data.error || 'Tente novamente.'));
+                })
+                .catch(error => {
+                    console.error('[PIX Checkout]', error);
+                    alert(error.message || 'Falha de comunicação ao gerar PIX.');
                     btnPix.innerText = 'Finalizar Pedido ➔';
                     btnPix.disabled = false;
-                    return;
-                }
-
-                // Se o PIX já foi aprovado, não precisamos exibir QR Code.
-                if (data.status === 'approved') {
-                    window.location.href = data.redirect;
-                    return;
-                }
-
-                if (
-                    !data.order_id ||
-                    !data.payment_id ||
-                    !data.order_key ||
-                    !data.pix_copia_cola ||
-                    !data.pix_base64
-                ) {
-                    throw new Error('O painel retornou dados incompletos do PIX.');
-                }
-
-                const rootContainer = document.querySelector('.checkout-container');
-
-                // Montagem segura da interface, sem inserir conteúdo externo via innerHTML.
-                const wrapper = document.createElement('div');
-                wrapper.className = 'braga-pix-wrapper';
-
-                const title = document.createElement('h2');
-                title.className = 'braga-pix-title';
-                title.textContent = 'Pedido Gerado com Sucesso! 🚀';
-
-                const description = document.createElement('p');
-                description.className = 'braga-pix-text';
-                description.textContent = 'Abra o aplicativo do seu banco e escaneie o código abaixo:';
-
-                const qr = document.createElement('img');
-                qr.alt = 'QR Code para pagamento PIX';
-                qr.style.cssText = 'width:250px;height:250px;border-radius:8px;margin:20px auto;display:block;';
-                qr.src = 'data:image/png;base64,' + data.pix_base64;
-
-                const codeLabel = document.createElement('p');
-                codeLabel.className = 'braga-pix-text';
-                codeLabel.textContent = 'Ou utilize a chave Copia e Cola:';
-
-                const codeInput = document.createElement('input');
-                codeInput.type = 'text';
-                codeInput.readOnly = true;
-                codeInput.value = data.pix_copia_cola;
-                codeInput.className = 'braga-pix-input';
-
-                codeInput.addEventListener('click', async () => {
-                    codeInput.select();
-
-                    try {
-                        await navigator.clipboard.writeText(codeInput.value);
-                        alert('Código PIX copiado!');
-                    } catch (error) {
-                        document.execCommand('copy');
-                    }
                 });
-
-                const statusText = document.createElement('p');
-                statusText.id = 'status-texto';
-                statusText.className = 'braga-pix-text';
-                statusText.textContent = 'Aguardando pagamento... ⏳';
-
-                wrapper.append(
-                    title,
-                    description,
-                    qr,
-                    codeLabel,
-                    codeInput,
-                    statusText
-                );
-
-                rootContainer.replaceChildren(wrapper);
-
-                window.scrollTo({ top: 0, behavior: 'smooth' });
-
-                // Consulta protegida por order_key e payment_id.
-                const query = new URLSearchParams({
-                    order_id: String(data.order_id),
-                    payment_id: String(data.payment_id),
-                    order_key: data.order_key
-                });
-
-                let attempts = 0;
-                const maxAttempts = 120;
-
-                const checkInterval = setInterval(async () => {
-
-                    attempts++;
-
-                    try {
-                        const response = await fetch(
-                            '/wp-json/checkout1/v1/check-status?' + query.toString(),
-                            { cache: 'no-store' }
-                        );
-
-                        const statusData = await response.json();
-
-                        if (!response.ok || statusData.success === false) {
-                            clearInterval(checkInterval);
-                            statusText.textContent =
-                                'Não foi possível consultar o pagamento. Entre em contato com a loja.';
-                            return;
-                        }
-
-                        if (statusData.paid) {
-                            clearInterval(checkInterval);
-
-                            statusText.textContent =
-                                'Pagamento confirmado! 🎉 Redirecionando...';
-
-                            setTimeout(() => {
-                                window.location.href =
-                                    statusData.redirect || data.redirect;
-                            }, 1500);
-
-                            return;
-                        }
-
-                        if (
-                            ['rejected', 'cancelled'].includes(statusData.status)
-                        ) {
-                            clearInterval(checkInterval);
-
-                            statusText.textContent =
-                                statusData.status === 'rejected'
-                                    ? 'Pagamento recusado. Entre em contato com a loja.'
-                                    : 'Pagamento cancelado.';
-
-                            return;
-                        }
-
-                        if (attempts >= maxAttempts) {
-                            clearInterval(checkInterval);
-
-                            statusText.textContent =
-                                'A consulta automática foi encerrada. Você pode aguardar a confirmação do pagamento na loja.';
-                        }
-
-                    } catch (error) {
-                        console.error('[Polling Erro]', error);
-
-                        if (attempts >= maxAttempts) {
-                            clearInterval(checkInterval);
-                            statusText.textContent =
-                                'Não foi possível continuar a consulta automática.';
-                        }
-                    }
-
-                }, 3000);
-
-            })
-            .catch(error => {
-                console.error('[PIX Checkout]', error);
-                alert(error.message || 'Falha de comunicação ao gerar PIX.');
-                btnPix.innerText = 'Finalizar Pedido ➔';
-                btnPix.disabled = false;
             });
         });
-    });
     </script>
 </div>
